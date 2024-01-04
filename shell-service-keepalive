@@ -1,0 +1,74 @@
+#!/bin/bash
+
+# Configuration file path
+config_file="service_monitor_config"
+
+# Check if the configuration file exists
+if [ -f "$config_file" ]; then
+    echo "Config file detected. Loading configuration..."
+    source "$config_file"
+    sleep 5
+else
+    echo "No config file found. Setting up initial configuration..."
+
+    # User input for variable values
+    read -p "Enter services (space-separated): " services_input
+    read -p "Enter log file path: " log_file_input
+    read -p "Enter admin email address: " admin_email_input
+    read -p "Enter automation interval (minutes): " interval_input
+
+    # Save variables to configuration file
+    echo "services=($services_input)" > "$config_file"
+    echo "log_file=$log_file_input" >> "$config_file"
+    echo "admin_email=$admin_email_input" >> "$config_file"
+    echo "interval=$interval_input" >> "$config_file"
+
+    echo "Configuration saved. Starting service monitor..."
+    sleep 5
+fi
+
+# Function to check and restart services
+check_and_restart_services() {
+    echo "----------------------" >> "$log_file"
+    echo "$(date): Checking services..." >> "$log_file"
+
+    for service in "${services[@]}"; do
+        if systemctl is-active --quiet "$service"; then
+            echo "$(date): $service is running." >> "$log_file"
+        else
+            echo "$(date): $service is not running. Restarting..." >> "$log_file"
+            systemctl restart "$service"
+            if [ $? -eq 0 ]; then
+                echo "$(date): $service restarted successfully." >> "$log_file"
+            else
+                echo "$(date): Failed to restart $service." >> "$log_file"
+            fi
+        fi
+    done
+    
+    echo "----------------------" >> "$log_file"
+}
+
+# Send email to admin if changes detected
+send_email_to_admin() {
+    diff_output=$(diff "$log_file" "$log_file.old")
+
+    if [ -n "$diff_output" ]; then
+        echo -e "Subject: Service Monitor Report\n\n$diff_output" | /usr/sbin/sendmail "$admin_email"
+    fi
+}
+
+# Main script execution
+check_and_restart_services
+
+# Create a backup of the log file
+cp "$log_file" "$log_file.old"
+
+# Check again after restart
+check_and_restart_services
+
+# Send email report if changes detected
+send_email_to_admin
+
+# Schedule the script to run at the specified interval
+(crontab -l 2>/dev/null; echo "*/$interval * * * * $(pwd)/$0") | crontab -
